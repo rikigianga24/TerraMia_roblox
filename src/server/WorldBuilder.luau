@@ -73,15 +73,15 @@ local function buildGround(folder: Instance)
 	}, folder)
 	local roadColor = C.road
 	local south = WorldConfig.BORGO_SIZE_Z / 2
-	local farEnd = WorldConfig.FIRST_ROW_FRONT_Z + 2 * (WorldConfig.PLOT_SIDE + WorldConfig.PLOT_GAP)
+	local farEnd = WorldConfig.FIRST_ROW_FRONT_Z + WorldConfig.PLOT_ROWS * (WorldConfig.PLOT_SIDE + WorldConfig.PLOT_GAP)
 	-- strada bianca dalla porta del borgo giù fino alle fattorie
 	Build.block(Vector3.new(WorldConfig.ROAD_X, 0, (south + farEnd) / 2), Vector3.new(WorldConfig.ROAD_WIDTH, 0.2, farEnd - south + 8),
 		roadColor, Enum.Material.Sand, folder).Name = "Strada"
 	-- una stradina davanti a ogni fila di fattorie
-	for row = 0, 1 do
+	for row = 0, WorldConfig.PLOT_ROWS - 1 do
 		local z = WorldConfig.FIRST_ROW_FRONT_Z + row * (WorldConfig.PLOT_SIDE + WorldConfig.PLOT_GAP) - WorldConfig.PLOT_GAP / 2
 		local left = WorldConfig.plotOrigin(1).X
-		local right = WorldConfig.plotOrigin(4).X + WorldConfig.PLOT_SIDE
+		local right = WorldConfig.plotOrigin(WorldConfig.PLOTS_PER_ROW).X + WorldConfig.PLOT_SIDE
 		Build.block(Vector3.new((left + right) / 2, 0, z), Vector3.new(right - left, 0.2, 8), roadColor, Enum.Material.Sand, folder).Name = "Stradina"
 	end
 	local spawn = Instance.new("SpawnLocation")
