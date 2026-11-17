@@ -95,6 +95,7 @@ src/client/   -> StarterPlayerScripts.Client
   Panels.luau               negozio, bacheca, edifici, terreni, strutture, magazzino
   FarmInput.luau            tocchi e clic sulla propria fattoria
   BorgoLocal.luau           il borgo restaurato secondo la propria partita, testi nel mondo
+  FarmFx.luau               animazioni delle piante: crescita, maturazione, raccolto
   Ui.luau                   pezzi d'interfaccia e colori del tema
 src/tests/    -> ServerStorage.Tests
   RulesTests.luau           test delle regole (porting di tests/test_game_state.gd)
@@ -125,9 +126,23 @@ docs/design.md              documento di design
 - **Un borgo, tante partite.** Il server costruisce ogni edificio due volte,
   rudere e restaurato; il client mostra quello giusto. Le modifiche fatte dal
   client restano solo sul suo schermo.
-- **Grafica provvisoria a blocchi** costruita da codice, con i colori della
-  direzione artistica del prototipo. Collina e strade usano il Terrain di
-  Roblox.
+- **Piante 3D da Blender.** Le colture con un modello (grano, lattuga,
+  pomodoro, carota, vite, anguria, castagno, ciliegio, fico, nocciolo, ulivo,
+  zafferano, aglio, carciofo, cipolla, mandorlo, melanzana, more, patata,
+  pistacchio, rosmarino, zucchina) usano i modelli in `ReplicatedStorage.Modelli` (uno per pianta,
+  `TerraMia_<Nome>`, con le fasi `Fase1`…`Fase4` e `Raccolto`). Non sono in
+  `src/`: stanno nel luogo pubblicato, quindi con `rojo serve` va aperto quel
+  luogo, non un Baseplate. Germoglio nella prima metà della crescita, poi
+  crescita, poi matura; gli alberi raccolti restano secchi finché non si
+  annaffiano. Le altre piante sono ancora a blocchi.
+- **Animazioni sul client.** Il server segna le piante appena cambiate con
+  l'attributo `Fx`; `FarmFx` le fa rimbalzare, saltare quando maturano e
+  volare dal contadino quando si raccolgono. Chi entra dopo non le rivede.
+- **Fattorie grandi:** 8 fattorie da 18×18 quadranti di 6 stud (108 stud di
+  lato), due file da quattro ai lati della strada (`WorldConfig`).
+- **Il resto è grafica provvisoria a blocchi** costruita da codice, con i
+  colori della direzione artistica del prototipo. Collina e strade usano il
+  Terrain di Roblox.
 - **Salvataggi** nel DataStore `TerraMia_v1`, una chiave per giocatore. Se il
   caricamento fallisce la partita non viene sovrascritta.
 - **Modalità sviluppatore** (`GameData.DEV_MODE`): monete infinite e livello

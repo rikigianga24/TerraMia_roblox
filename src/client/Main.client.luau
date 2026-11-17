@@ -17,6 +17,7 @@ local Panels = require(script.Parent.Panels)
 local Hud = require(script.Parent.Hud)
 local FarmInput = require(script.Parent.FarmInput)
 local BorgoLocal = require(script.Parent.BorgoLocal)
+local FarmFx = require(script.Parent.FarmFx)
 
 local screen = Instance.new("ScreenGui")
 screen.Name = "TerraMia"
@@ -28,6 +29,7 @@ Panels.init(screen)
 Hud.init(screen)
 FarmInput.init()
 BorgoLocal.init()
+task.spawn(FarmFx.init) -- aspetta che il server abbia costruito il mondo
 
 ReplicatedStorage:WaitForChild("Remotes").Message.OnClientEvent:Connect(function(list)
 	Hud.onMessages(list)

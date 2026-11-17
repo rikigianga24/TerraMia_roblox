@@ -1,7 +1,7 @@
 -- Misure e posizioni del mondo 3D, condivise da server e client.
 --
 -- Su Roblox più giocatori stanno nello stesso server: ognuno ha la sua
--- fattoria (un appezzamento di 18×18 quadranti) attorno alla strada che sale
+-- fattoria (un appezzamento di 18×18 quadranti da 6 stud) attorno alla strada che sale
 -- al borgo, in cima alla collina al centro della mappa. Il borgo è uno solo,
 -- ma ognuno lo vede restaurato secondo la propria partita (vedi
 -- src/client/BorgoLocal.luau).
@@ -12,9 +12,14 @@ local GameData = require(script.Parent.GameData)
 local WorldConfig = {}
 
 -- --- Fattorie -------------------------------------------------------------
-WorldConfig.FARM_CELL = 4 -- lato di un quadrante, in stud
+WorldConfig.FARM_CELL = 6 -- lato di un quadrante, in stud: fattorie larghe 108 stud
 WorldConfig.FARM_TILE_HEIGHT = 1
 WorldConfig.MAX_PLOTS = 8 -- da tenere uguale ai giocatori massimi del server
+WorldConfig.PLOTS_PER_ROW = 4 -- due a sinistra e due a destra della strada
+WorldConfig.PLOT_ROWS = math.ceil(WorldConfig.MAX_PLOTS / WorldConfig.PLOTS_PER_ROW)
+-- Scala dei modelli 3D delle piante (ReplicatedStorage.Modelli, fatti in
+-- Blender in metri): una zolla di 2,2 m riempie quasi un quadrante.
+WorldConfig.PLANT_SCALE = WorldConfig.FARM_CELL * 0.92 / 2.2
 
 -- --- Borgo ------------------------------------------------------------------
 WorldConfig.BORGO_CELL = 8 -- lato di una cella della pianta del borgo
@@ -61,12 +66,12 @@ function WorldConfig.borgoSpawn(): Vector3
 end
 
 -- Angolo "in fondo a sinistra" della fattoria numero i (1..MAX_PLOTS).
--- Le fattorie stanno a sud del borgo, in due file da quattro: due a sinistra
--- e due a destra della strada bianca che scende dalla porta. Il quadrante
--- (0,0) è in fondo; si cresce verso il borgo (y del quadrante verso -Z) e
--- verso destra (x verso +X).
-local PLOT_SIDE = GameData.worldSize() * WorldConfig.FARM_CELL -- 72 stud
-local PLOT_GAP = 32
+-- Le fattorie stanno a sud del borgo, in file da quattro (PLOTS_PER_ROW): due
+-- a sinistra e due a destra della strada bianca che scende dalla porta. Il
+-- quadrante (0,0) è in fondo; si cresce verso il borgo (y del quadrante verso
+-- -Z) e verso destra (x verso +X).
+local PLOT_SIDE = GameData.worldSize() * WorldConfig.FARM_CELL -- 108 stud
+local PLOT_GAP = 40
 WorldConfig.PLOT_SIDE = PLOT_SIDE
 WorldConfig.PLOT_GAP = PLOT_GAP
 -- La strada scende lungo x = ROAD_X (la porta del borgo).
@@ -76,8 +81,8 @@ WorldConfig.ROAD_WIDTH = 12
 WorldConfig.FIRST_ROW_FRONT_Z = WorldConfig.BORGO_SIZE_Z / 2 + 32
 
 function WorldConfig.plotOrigin(i: number): Vector3
-	local col = (i - 1) % 4 -- 0..3
-	local row = (i - 1) // 4 -- 0, 1
+	local col = (i - 1) % WorldConfig.PLOTS_PER_ROW -- 0..3
+	local row = (i - 1) // WorldConfig.PLOTS_PER_ROW -- 0..PLOT_ROWS-1
 	local side = if col < 2 then -1 else 1
 	local k = if col < 2 then 1 - col else col - 2 -- 0 vicino alla strada, 1 lontano
 	local nearEdge = WorldConfig.ROAD_X + side * (WorldConfig.ROAD_WIDTH / 2 + 10 + k * (PLOT_SIDE + PLOT_GAP))

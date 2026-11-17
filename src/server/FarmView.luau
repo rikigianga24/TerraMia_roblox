@@ -1,5 +1,6 @@
--- La fattoria di un giocatore nel mondo 3D: 18×18 mattonelle, piante,
--- animali, strutture, decorazioni, forziere e cartelli dei lotti in vendita.
+-- La fattoria di un giocatore nel mondo 3D: 18×18 mattonelle, piante (i
+-- modelli Blender di ReplicatedStorage.Modelli), animali, strutture,
+-- decorazioni, forziere e cartelli dei lotti in vendita.
 --
 -- È costruita dal server, così ognuno vede anche le fattorie degli altri.
 -- refresh(state) confronta una "firma" per ogni quadrante e oggetto e
@@ -9,6 +10,7 @@
 -- la cartella della fattoria ha OwnerUserId. Il client li usa per capire
 -- quale quadrante è stato toccato (src/client/FarmInput.luau).
 
+local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -105,50 +107,134 @@ local function tileLook(s: any, x: number, y: number): (string, Color3, Enum.Mat
 end
 
 -- --- Piante -------------------------------------------------------------------
+--
+-- Le piante usano i modelli fatti in Blender (ReplicatedStorage.Modelli, uno
+-- per pianta: TerraMia_Grano, TerraMia_Ulivo...), cinque pezzi ciascuno:
+--   Fase1 (germoglio)          appena annaffiata, primo mezzo della crescita
+--   Fase2 (crescita/giovane)   secondo mezzo della crescita
+--   Fase3 (matura/maturo)      pronta da raccogliere; per gli alberi già
+--                              raccolti anche durante la nuova crescita
+--   Fase4 (secca/secco)        albero raccolto che aspetta l'acqua
+--   Raccolto                   il prodotto, che salta via quando si raccoglie
+-- Una pianta senza modello usa i blocchi di sempre.
 
+-- Stadio mostrato: "bag" (semi da annaffiare), "rest" (albero raccolto che
+-- aspetta l'acqua), "f1", "f2" (crescita), "ready".
 local function plantStage(s: any, x: number, y: number): string
+	local plot = Rules.getPlot(s, x, y)
 	if Rules.needsWater(s, x, y) then
-		return "bag"
+		return if plot and (plot.harvests or 0) > 0 then "rest" else "bag"
 	end
 	local p = Rules.plotProgress(s, x, y)
 	if p >= 1 then
 		return "ready"
-	elseif p < 0.34 then
-		return "s1"
-	elseif p < 0.67 then
-		return "s2"
+	elseif plot and (plot.harvests or 0) > 0 then
+		return "f3" -- l'albero è già grande: rifà i frutti
 	end
-	return "s3"
+	return if p < 0.5 then "f1" else "f2"
 end
 
+local STAGE_PHASE = { f1 = "_Fase1", f2 = "_Fase2", f3 = "_Fase3", ready = "_Fase3", rest = "_Fase4", harvest = "_Raccolto" }
+
+-- Modelli già scalati e con il perno in basso al centro, per pianta e fase.
+local templates: { [string]: Model | false } = {}
+
+-- Il modello si chiama "TerraMia_" + il nome della pianta con l'iniziale
+-- maiuscola; qui le piante il cui modello ha un altro nome.
+local MODEL_NAMES = {
+	rovo_more = "Mora",
+}
+
+local function plantTemplate(cropId: string, stage: string): Model?
+	local phase = STAGE_PHASE[stage]
+	if not phase then
+		return nil
+	end
+	local id = cropId .. phase
+	local cached = templates[id]
+	if cached ~= nil then
+		return cached or nil
+	end
+	templates[id] = false
+	local folder = ReplicatedStorage:FindFirstChild("Modelli")
+	local name = "TerraMia_" .. (MODEL_NAMES[cropId] or (string.upper(string.sub(cropId, 1, 1)) .. string.sub(cropId, 2)))
+	local source = folder and folder:FindFirstChild(name)
+	if not (source and source:IsA("Model")) then
+		return nil
+	end
+	local node
+	for _, child in source:GetChildren() do
+		if child:IsA("Model") and string.find(child.Name, phase, 1, true) then
+			node = child
+			break
+		end
+	end
+	if not node then
+		return nil
+	end
+	local m = node:Clone()
+	-- i pezzi del modello sono grandi quanto la scala del modello padre
+	m:ScaleTo(WorldConfig.PLANT_SCALE / source:GetScale())
+	for _, part in m:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+			part.CanCollide = false
+			part.CanTouch = false
+		end
+	end
+	local cf, size = m:GetBoundingBox()
+	m.WorldPivot = CFrame.new(cf.Position - Vector3.new(0, size.Y / 2, 0))
+	m.Name = cropId
+	templates[id] = m
+	return m
+end
+
+-- Una rotazione fissa per quadrante, così i campi non sembrano fotocopie.
+local function cellYaw(x: number, y: number): CFrame
+	return CFrame.Angles(0, ((x * 7 + y * 13) % 4) * math.pi / 2 + ((x * 3 + y * 5) % 7 - 3) * 0.08, 0)
+end
+
+local function placeModel(template: Model, base: Vector3, x: number, y: number): Model
+	local m = template:Clone()
+	m:PivotTo(CFrame.new(base) * cellYaw(x, y))
+	return m
+end
+
+local K = CELL / 4 -- i pezzi a blocchi erano pensati per quadranti da 4 stud
+
 local function seedBag(m: Model, base: Vector3, color: Color3, big: boolean)
-	local k = if big then 1.3 else 1
+	local k = (if big then 1.3 else 1) * K
 	Build.block(base, Vector3.new(1.3 * k, 1.4 * k, 1 * k), Color3.fromRGB(214, 186, 140), Enum.Material.Fabric, m).CanCollide = false
 	Build.block(base + Vector3.new(0, 0.8 * k, 0), Vector3.new(1.32 * k, 0.4 * k, 1.02 * k), color, Enum.Material.Fabric, m).CanCollide = false
 end
 
-local function buildPlant(cropId: string, stage: string, fertilized: boolean, base: Vector3): Model
+local function sparkle(m: Model)
+	local spark = Instance.new("Sparkles")
+	spark.SparkleColor = Color3.fromRGB(255, 236, 160)
+	spark.TimeScale = 0.5
+	spark.Parent = m:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function buildPlantBody(cropId: string, stage: string, base: Vector3, x: number, y: number): Model
 	local c = GameData.CROPS[cropId]
 	local color = GameData.color(c.color)
-	local m = Instance.new("Model")
-	m.Name = cropId
+	local template = plantTemplate(cropId, stage)
+	local m = if template then placeModel(template, base, x, y) else Instance.new("Model")
 	local perennial = GameData.isPerennial(cropId)
-	if fertilized then
-		Build.part({
-			Shape = Enum.PartType.Cylinder,
-			Size = Vector3.new(0.1, 3, 3),
-			CFrame = CFrame.new(base + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90)),
-			Color = Color3.fromRGB(226, 214, 120),
-			Material = Enum.Material.Sand,
-			CanCollide = false,
-		}, m)
-	end
 	if stage == "bag" then
 		seedBag(m, base, color, perennial)
+		m.WorldPivot = CFrame.new(base)
 		return m
 	end
+	if template then
+		if stage == "ready" then
+			sparkle(m)
+		end
+		return m
+	end
+	-- senza modello: la pianta a blocchi
 	local leaf = if c.kind == "crop" then Color3.fromRGB(88, 150, 60) else C.leaf
-	local growth = if stage == "s1" then 0.4 elseif stage == "s2" then 0.7 else 1
+	local growth = if stage == "f1" then 0.4 elseif stage == "f2" then 0.7 else 1
 	if c.kind == "tree" then
 		local trunkH = 1.2 + 2 * growth
 		local trunk = Build.cylinder(base, trunkH, 0.35 + 0.35 * growth, C.wood, m)
@@ -180,7 +266,7 @@ local function buildPlant(cropId: string, stage: string, fertilized: boolean, ba
 			stalk.CanCollide = false
 			stalk.CFrame *= CFrame.Angles(math.sin(a) * 0.25, 0, math.cos(a) * 0.25)
 		end
-		if stage == "s3" or stage == "ready" then
+		if growth >= 0.7 then
 			Build.ball(base + Vector3.new(0, h * 0.7, 0), 1.2, leaf, m)
 		end
 		if stage == "ready" and not golden then
@@ -191,10 +277,48 @@ local function buildPlant(cropId: string, stage: string, fertilized: boolean, ba
 		end
 	end
 	if stage == "ready" then
-		local spark = Instance.new("Sparkles")
-		spark.SparkleColor = Color3.fromRGB(255, 236, 160)
-		spark.TimeScale = 0.5
-		spark.Parent = m:FindFirstChildWhichIsA("BasePart")
+		sparkle(m)
+	end
+	-- i blocchi sono misurati per quadranti da 4 stud: si scalano dal piede
+	m.WorldPivot = CFrame.new(base)
+	m:ScaleTo(K)
+	return m
+end
+
+local function buildPlant(cropId: string, stage: string, fertilized: boolean, base: Vector3, x: number, y: number): Model
+	local m = buildPlantBody(cropId, stage, base, x, y)
+	m.Name = cropId
+	m:SetAttribute("Crop", cropId)
+	m:SetAttribute("Stage", stage)
+	m:SetAttribute("Color", GameData.CROPS[cropId].color)
+	if fertilized then
+		Build.part({
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.1, 3 * K, 3 * K),
+			CFrame = CFrame.new(base + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+			Color = Color3.fromRGB(226, 214, 120),
+			Material = Enum.Material.Sand,
+			CanCollide = false,
+		}, m)
+	end
+	return m
+end
+
+-- Il prodotto che salta fuori dal quadrante appena raccolto: il client lo
+-- anima (src/client/FarmFx.luau) e il server lo toglie dopo poco.
+local function buildHarvestFx(cropId: string, base: Vector3, x: number, y: number): Model?
+	local template = plantTemplate(cropId, "harvest")
+	if not template then
+		return nil
+	end
+	local m = placeModel(template, base, x, y)
+	m.Name = "RaccoltoFx"
+	m:SetAttribute("Crop", cropId)
+	m:SetAttribute("Color", GameData.CROPS[cropId].color)
+	for _, part in m:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.CanQuery = false
+		end
 	end
 	return m
 end
@@ -202,9 +326,9 @@ end
 local function buildChest(base: Vector3): Model
 	local m = Instance.new("Model")
 	m.Name = "Forziere"
-	Build.block(base, Vector3.new(2.4, 1.6, 1.6), Color3.fromRGB(120, 72, 36), Enum.Material.Wood, m)
-	Build.block(base + Vector3.new(0, 1.6, 0), Vector3.new(2.5, 0.5, 1.7), Color3.fromRGB(140, 86, 44), Enum.Material.Wood, m)
-	Build.block(base + Vector3.new(0, 0.7, 0), Vector3.new(2.5, 0.3, 1.7), Color3.fromRGB(222, 176, 70), Enum.Material.Metal, m)
+	Build.block(base, Vector3.new(2.4, 1.6, 1.6) * K, Color3.fromRGB(120, 72, 36), Enum.Material.Wood, m)
+	Build.block(base + Vector3.new(0, 1.6, 0) * K, Vector3.new(2.5, 0.5, 1.7) * K, Color3.fromRGB(140, 86, 44), Enum.Material.Wood, m)
+	Build.block(base + Vector3.new(0, 0.7, 0) * K, Vector3.new(2.5, 0.3, 1.7) * K, Color3.fromRGB(222, 176, 70), Enum.Material.Metal, m)
 	local spark = Instance.new("Sparkles")
 	spark.SparkleColor = Color3.fromRGB(255, 220, 120)
 	spark.Parent = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
@@ -361,21 +485,31 @@ function FarmView:refresh(s: any)
 			-- pianta o forziere
 			local thing = ""
 			local plot = Rules.getPlot(s, x, y)
+			local stage = if plot then plantStage(s, x, y) else ""
 			if plot then
-				thing = plot.crop .. "|" .. plantStage(s, x, y) .. "|" .. tostring(plot.fertilized)
+				thing = plot.crop .. "|" .. stage .. "|" .. tostring(plot.fertilized)
 			elseif Rules.isChestCell(s, x, y) then
 				thing = "chest"
 			end
-			if self.thingSig[k] ~= thing then
+			local old = self.thingSig[k]
+			if old ~= thing then
 				self.thingSig[k] = thing
 				if self.things[k] then
 					self.things[k]:Destroy()
 					self.things[k] = nil
 				end
 				local base = WorldConfig.farmCell(self.index, x, y)
+				-- old == nil: la fattoria è appena stata costruita, niente effetti
+				local oldCrop, oldStage = string.match(old or "", "^([^|]+)|([^|]+)|")
+				local oldStageSame = oldCrop ~= nil and plot ~= nil and oldCrop == plot.crop and oldStage == stage
 				local m
 				if plot then
-					m = buildPlant(plot.crop, plantStage(s, x, y), plot.fertilized, base)
+					m = buildPlant(plot.crop, stage, plot.fertilized, base, x, y)
+					-- il client fa crescere la pianta (src/client/FarmFx.luau)
+					if old ~= nil and not oldStageSame then
+						m:SetAttribute("Fx", if stage == "ready" then "ready" elseif stage == "bag" then "plant" else "grow")
+						m:SetAttribute("FxAt", workspace:GetServerTimeNow())
+					end
 				elseif thing == "chest" then
 					m = buildChest(base)
 				end
@@ -383,6 +517,16 @@ function FarmView:refresh(s: any)
 					tag(m, x, y)
 					m.Parent = self.plants
 					self.things[k] = m
+				end
+				-- da "pronta" a qualcos'altro: è stata raccolta
+				if oldStage == "ready" and stage ~= "ready" then
+					local fx = buildHarvestFx(oldCrop :: string, base, x, y)
+					if fx then
+						fx:SetAttribute("Fx", "harvest")
+						fx:SetAttribute("FxAt", workspace:GetServerTimeNow())
+						fx.Parent = self.plants
+						Debris:AddItem(fx, 2.5)
+					end
 				end
 			end
 		end
